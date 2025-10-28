@@ -115,7 +115,7 @@ def gerar_tabela_adesao_anual(df, pasta_output='outputs'):
     logger.info(f"Tabela de adesão anual salva: {len(crossdf_final)} instituições")
 
 
-def grafico_acumulado(df, lista_inst, pasta_output='outputs', nome_arquivo='grafico_acumulado.png'):
+def grafico_acumulado(df, lista_inst, pasta_output='outputs', nome_arquivo='grafico_acumulado.png', excluir_nacional=False):
     """
     Gera gráfico de pareceres acumulados ao longo do tempo.
 
@@ -124,18 +124,33 @@ def grafico_acumulado(df, lista_inst, pasta_output='outputs', nome_arquivo='graf
         lista_inst (list): Lista de instituições a plotar
         pasta_output (str): Pasta para salvar o gráfico
         nome_arquivo (str): Nome do arquivo de saída
+        excluir_nacional (bool): Se True, exclui completamente o Nacional do gráfico
     """
     logger.info(f"Gerando gráfico acumulado para {len(lista_inst)} instituições...")
 
     df['data'] = pd.to_datetime(df['data'])
-    current_df = df.loc[df['origem_tratada'].isin(lista_inst)].copy()
-    df_cumsum = current_df.groupby(['origem_tratada', 'data']).count().groupby(level=0).cumsum().reset_index()
-    df_cumsum_filtrado = df_cumsum[df_cumsum['data'] <= '2024-12-31']
+    current_df = df.copy()
+
+    # Excluir Nacional completamente se solicitado
+    if excluir_nacional:
+        current_df = current_df[current_df['origem_tratada'] != 'Nacional']
+        logger.info("Nacional excluído do gráfico acumulado")
+
+    # Transformar instituições fora da lista em "Outros" (consistente com média móvel)
+    current_df['origem_tratada'] = current_df['origem_tratada'].apply(lambda x: x if x in lista_inst else 'Outros')
+
+    # Agrupar por instituição e data, ordenar, e calcular acumulado
+    df_grouped = current_df.groupby(['origem_tratada', 'data'])['contagem'].sum().reset_index()
+    df_grouped = df_grouped.sort_values(['origem_tratada', 'data'])
+    df_cumsum = df_grouped.groupby('origem_tratada')['contagem'].cumsum().reset_index(drop=True)
+    df_grouped['contagem_acumulada'] = df_cumsum
+
+    df_cumsum_filtrado = df_grouped[df_grouped['data'] <= '2024-12-31']
 
     plt.figure(figsize=(7, 5), dpi=500)
     for orgao in df_cumsum_filtrado['origem_tratada'].unique():
         orgao_data = df_cumsum_filtrado[df_cumsum_filtrado['origem_tratada'] == orgao]
-        plt.plot(orgao_data['data'], orgao_data['contagem'], label=orgao, color=obter_cor(orgao))
+        plt.plot(orgao_data['data'], orgao_data['contagem_acumulada'], label=orgao, color=obter_cor(orgao))
 
     plt.legend(title='Órgãos')
     plt.grid()
@@ -168,6 +183,9 @@ def grafico_media_movel(df, lista_inst, pasta_output='outputs', nome_arquivo='gr
     # Agrupar por instituição e mês
     df_monthly = current_df.groupby(['origem_tratada', 'mes']).size().reset_index(name='contagem')
     df_monthly['data'] = df_monthly['mes'].dt.to_timestamp()
+
+    # Ordenar por instituição e data antes de calcular rolling (CRÍTICO!)
+    df_monthly = df_monthly.sort_values(['origem_tratada', 'data'])
 
     # Calcular média móvel de 12 meses
     df_monthly['media_movel'] = df_monthly.groupby('origem_tratada')['contagem'].transform(
@@ -245,6 +263,66 @@ def grafico_stackplot(df, lista_inst, pasta_output='outputs', nome_arquivo='graf
     logger.info(f"Stackplot salvo: {caminho}")
 
 
+def validar_totais(df_temp, top_10_com_nacional, top_10_sem_nacional):
+    """
+    Valida consistência dos totais entre diferentes análises.
+
+    Args:
+        df_temp (pd.DataFrame): DataFrame com dados temporais
+        top_10_com_nacional (list): Lista das top 10 instituições incluindo Nacional
+        top_10_sem_nacional (list): Lista das top 10 instituições sem Nacional
+
+    Returns:
+        dict: Dicionário com totais calculados
+    """
+    logger.info("=" * 60)
+    logger.info("VALIDANDO TOTAIS")
+    logger.info("=" * 60)
+
+    resultados = {}
+
+    # Total geral no DataFrame original
+    total_geral = len(df_temp)
+    resultados['total_geral'] = total_geral
+    logger.info(f"Total geral de pareceres: {total_geral:,}")
+
+    # Total por instituição (excluindo NÃO_PREENCHIDO)
+    df_valido = df_temp[df_temp['origem_tratada'] != 'NÃO_PREENCHIDO']
+    total_valido = len(df_valido)
+    resultados['total_valido'] = total_valido
+    logger.info(f"Total excluindo NÃO_PREENCHIDO: {total_valido:,}")
+
+    # Totais das top 10
+    total_top10_com_nacional = len(df_temp[df_temp['origem_tratada'].isin(top_10_com_nacional)])
+    total_top10_sem_nacional = len(df_temp[df_temp['origem_tratada'].isin(top_10_sem_nacional)])
+    resultados['top10_com_nacional'] = total_top10_com_nacional
+    resultados['top10_sem_nacional'] = total_top10_sem_nacional
+
+    logger.info(f"Total Top 10 com Nacional: {total_top10_com_nacional:,}")
+    logger.info(f"Total Top 10 sem Nacional: {total_top10_sem_nacional:,}")
+
+    # Total de "Outros" (instituições fora do top 10 com Nacional)
+    outros_instituicoes = df_valido[~df_valido['origem_tratada'].isin(top_10_com_nacional)]
+    total_outros = len(outros_instituicoes)
+    resultados['total_outros'] = total_outros
+    logger.info(f"Total 'Outros' (fora do Top 10): {total_outros:,}")
+
+    # Validar: Top 10 + Outros deve = total válido
+    soma_top10_outros = total_top10_com_nacional + total_outros
+    if soma_top10_outros == total_valido:
+        logger.info(f"✓ Validação OK: Top 10 ({total_top10_com_nacional:,}) + Outros ({total_outros:,}) = Total válido ({total_valido:,})")
+    else:
+        logger.warning(f"⚠ INCONSISTÊNCIA: Top 10 ({total_top10_com_nacional:,}) + Outros ({total_outros:,}) = {soma_top10_outros:,}, esperado {total_valido:,}")
+
+    # Totais por ano
+    totais_ano = df_temp.groupby('ano').size().to_dict()
+    logger.info(f"Totais por ano: {totais_ano}")
+    resultados['totais_ano'] = totais_ano
+
+    logger.info("=" * 60)
+    return resultados
+
+
 def main():
     """
     Função principal que executa todas as análises.
@@ -273,9 +351,12 @@ def main():
     top_10_sem_nacional = df_temp.loc[(df_temp['origem_tratada'] != 'NÃO_PREENCHIDO') & (df_temp['origem_tratada'] != 'Nacional')]['origem_tratada'].value_counts().head(10).index.tolist()
 
     # Gerar gráficos
-    grafico_acumulado(df_temp, top_10_sem_nacional, pasta_output, 'grafico_acumulado_sem_nacional.png')
+    grafico_acumulado(df_temp, top_10_sem_nacional, pasta_output, 'grafico_acumulado_sem_nacional.png', excluir_nacional=True)
     grafico_media_movel(df_temp, top_10_com_nacional, pasta_output, 'grafico_media_movel.png')
     grafico_stackplot(df_temp, top_10_com_nacional, pasta_output, 'grafico_stackplot.png')
+
+    # Validar totais
+    validar_totais(df_temp, top_10_com_nacional, top_10_sem_nacional)
 
     logger.info("=" * 60)
     logger.info("ANÁLISE DE ADESÃO CONCLUÍDA COM SUCESSO")

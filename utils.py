@@ -47,9 +47,9 @@ MAPA_VALORES = {
         'NÃO_PREENCHIDO': 'Não preenchido'
     },
     'selRecomendacaoConitec': {
-        'F': 'Não Recomendada',
-        'V': 'Recomendada',
-        'D': 'Sem recomendação/Não avaliada',
+        'F': 'Recomendada (Favorável)',
+        'D': 'Não Recomendada (Desfavorável)',
+        'V': 'Não avaliada',
         'NÃO_PREENCHIDO': 'Não preenchido'
     },
     'binarios': {  # Para colunas S/N
@@ -295,7 +295,7 @@ def grafico_barras_sucesso(df_sucesso, x=12, y=7, z=300, output_path=None):
         capsize=5
     )
     plt.ylim(0, 100)
-    plt.xticks(rotation=45, ha='right')
+    plt.xticks(rotation=45, ha='right', fontsize=22)
     plt.tight_layout()
     plt.xlim(-0.5, len(df_sucesso['Órgão de ATS']) - 0.5)
     plt.yticks(range(0, 110, 20))

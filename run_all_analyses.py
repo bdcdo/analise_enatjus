@@ -29,14 +29,6 @@ logger = logging.getLogger(__name__)
 # Definir scripts na ordem de execução
 SCRIPTS = [
     {
-        'path': '0 Descritivos gerais/analise_pedidos.py',
-        'descricao': 'Análise de pedidos por CID e princípios ativos'
-    },
-    {
-        'path': '0 Descritivos gerais/analise_geral.py',
-        'descricao': 'Descritivos gerais por instituição'
-    },
-    {
         'path': '1 Adesao/analise_adesao.py',
         'descricao': 'Análise temporal de adesão'
     },
