@@ -41,32 +41,42 @@ def carregar_base_controle(pasta_input='outputs'):
     return df
 
 
-def analisar_diferencas_entre_instituicoes(df_base, pasta_output='outputs'):
+def analisar_diferencas_entre_instituicoes(df_base, pasta_output='outputs', min_pareceres=10):
     """
     Analisa diferenças entre instituições para mesmas combinações tecnologia+CID.
 
     Args:
         df_base (pd.DataFrame): Base de controle
         pasta_output (str): Pasta para salvar resultados
+        min_pareceres (int): Número mínimo de pareceres por instituição para incluir no conjunto
 
     Returns:
         pd.DataFrame: DataFrame com análise de diferenças
     """
     logger.info("Analisando diferenças entre instituições...")
 
+    # Total de combinações inicial
+    total_inicial = df_base[df_base['Órgão de ATS'] != 'Nacional'].groupby(['Tecnologia', 'CID']).ngroups
+    logger.info(f"Total de combinações Tecnologia+CID (excluindo Nacional): {total_inicial}")
+
     # Filtrar instituições (excluir Nacional)
-    df_filtrado = df_base[df_base['Órgão de ATS'] != 'Nacional']
+    df_filtrado = df_base[df_base['Órgão de ATS'] != 'Nacional'].copy()
+
+    # Filtrar apenas registros onde a instituição tem >= min_pareceres para aquela combinação
+    df_filtrado = df_filtrado[df_filtrado['Nº de pareceres'] >= min_pareceres]
+    logger.info(f"Registros onde a instituição tem >= {min_pareceres} pareceres: {len(df_filtrado)}")
 
     # Agrupar por Tecnologia e CID, contar instituições únicas
     tecnologias_validas = df_filtrado.groupby(['Tecnologia', 'CID'])['Órgão de ATS'].nunique()
     # Manter apenas combinações avaliadas por >= 2 instituições
     tecnologias_validas = tecnologias_validas[tecnologias_validas >= 2].index
+    logger.info(f"Combinações avaliadas por >= 2 instituições (após filtro de pareceres): {len(tecnologias_validas)}")
 
     # Filtrar DataFrame
     df_filtrado = df_filtrado.set_index(['Tecnologia', 'CID'])
     df_filtrado = df_filtrado.loc[df_filtrado.index.isin(tecnologias_validas)].reset_index()
 
-    logger.info(f"Combinações avaliadas por >= 2 instituições: {len(df_filtrado)}")
+    logger.info(f"Registros finais após todos os filtros: {len(df_filtrado)}")
 
     # Identificar órgãos mais e menos favoráveis para cada combinação
     resultados = []
@@ -115,7 +125,7 @@ def analisar_diferencas_entre_instituicoes(df_base, pasta_output='outputs'):
     df_difs = pd.DataFrame(resultados)
     salvar_excel(df_difs, 'diferencas_medicamentos.xlsx', pasta_output)
 
-    logger.info(f"Análise de diferenças salva: {len(df_difs)} combinações")
+    logger.info(f"\nAnálise de diferenças salva: {len(df_difs)} combinações")
 
     # Estatísticas de diferenças
     dif_100 = df_difs[df_difs['Diferença entre o órgão + favorável e o - favorável'] == 100].shape[0]
@@ -123,10 +133,68 @@ def analisar_diferencas_entre_instituicoes(df_base, pasta_output='outputs'):
     dif_50 = df_difs[df_difs['Diferença entre o órgão + favorável e o - favorável'] >= 50].shape[0]
     dif_20 = df_difs[df_difs['Diferença entre o órgão + favorável e o - favorável'] >= 20].shape[0]
 
-    logger.info(f"Diferença de 100%: {dif_100} combinações")
-    logger.info(f"Diferença >= 80%: {dif_80} combinações")
-    logger.info(f"Diferença >= 50%: {dif_50} combinações")
-    logger.info(f"Diferença >= 20%: {dif_20} combinações")
+    logger.info("\n" + "=" * 60)
+    logger.info("ESTATÍSTICAS DE DIVERGÊNCIA ENTRE INSTITUIÇÕES")
+    logger.info("=" * 60)
+    logger.info(f"Total de combinações analisadas: {len(df_difs)}")
+    logger.info(f"Combinações com diferença de 100% (máxima divergência): {dif_100} ({dif_100/len(df_difs)*100:.1f}%)")
+    logger.info(f"Combinações com diferença >= 80%: {dif_80} ({dif_80/len(df_difs)*100:.1f}%)")
+    logger.info(f"Combinações com diferença >= 50%: {dif_50} ({dif_50/len(df_difs)*100:.1f}%)")
+    logger.info(f"Combinações com diferença >= 20%: {dif_20} ({dif_20/len(df_difs)*100:.1f}%)")
+    logger.info("=" * 60 + "\n")
+
+    # Análise de concentração de divergências extremas (>= 80%)
+    if dif_80 > 0:
+        logger.info("\n" + "=" * 60)
+        logger.info("CONCENTRAÇÃO DE DIVERGÊNCIAS EXTREMAS (>= 80%)")
+        logger.info("=" * 60)
+
+        df_80 = df_difs[df_difs['Diferença entre o órgão + favorável e o - favorável'] >= 80]
+
+        # Contar quantas vezes cada instituição aparece como + favorável
+        orgaos_mais_favoraveis = []
+        for orgaos_str in df_80['Órgão de ATS + Favorável']:
+            # Dividir por "/" quando há empates
+            orgaos_list = [org.strip() for org in str(orgaos_str).split('/')]
+            orgaos_mais_favoraveis.extend(orgaos_list)
+
+        contagem_mais_fav = pd.Series(orgaos_mais_favoraveis).value_counts()
+
+        logger.info(f"\nInstituições que SEMPRE concedem (>= 80% mais favorável):")
+        logger.info(f"Total de casos de divergência >= 80%: {dif_80}")
+        for inst, count in contagem_mais_fav.items():
+            logger.info(f"  {inst}: {count} casos")
+
+        # Contar quantas vezes cada instituição aparece como - favorável
+        orgaos_menos_favoraveis = []
+        for orgaos_str in df_80['Órgão de ATS - Favorável']:
+            # Dividir por "/" quando há empates
+            orgaos_list = [org.strip() for org in str(orgaos_str).split('/')]
+            orgaos_menos_favoraveis.extend(orgaos_list)
+
+        contagem_menos_fav = pd.Series(orgaos_menos_favoraveis).value_counts()
+
+        logger.info(f"\nInstituições que NUNCA concedem (>= 80% menos favorável):")
+        for inst, count in contagem_menos_fav.items():
+            logger.info(f"  {inst}: {count} casos")
+
+        logger.info("\n" + "-" * 60)
+        logger.info("INTERPRETAÇÃO:")
+        logger.info(f"As divergências extremas (>= 80%) estão concentradas em alguns NatJus específicos.")
+
+        top_favoraveis = contagem_mais_fav.head(3)
+        logger.info(f"\nInstituições mais liberais (sempre favoráveis):")
+        for inst, count in top_favoraveis.items():
+            pct = (count/dif_80)*100
+            logger.info(f"  {inst}: {count}/{dif_80} casos ({pct:.1f}%)")
+
+        top_desfavoraveis = contagem_menos_fav.head(3)
+        logger.info(f"\nInstituições mais restritivas (sempre desfavoráveis):")
+        for inst, count in top_desfavoraveis.items():
+            pct = (count/dif_80)*100
+            logger.info(f"  {inst}: {count}/{dif_80} casos ({pct:.1f}%)")
+
+        logger.info("\n" + "=" * 60 + "\n")
 
     return df_difs
 
@@ -187,14 +255,113 @@ def comparar_com_nacional(df_base, pasta_output='outputs'):
     df_comparacao = pd.DataFrame(comparacao_resultados)
     salvar_excel(df_comparacao, 'comparacao_instituicoes_nacional.xlsx', pasta_output)
 
-    logger.info(f"Comparação com Nacional salva: {len(df_comparacao)} registros")
+    logger.info(f"\nComparação com Nacional salva: {len(df_comparacao)} registros")
 
     # Estatísticas
     if not df_comparacao.empty:
+        logger.info("\n" + "=" * 60)
+        logger.info("COMPARAÇÃO: INSTITUIÇÕES vs NACIONAL")
+        logger.info("=" * 60)
+
+        total_comparacoes = len(df_comparacao)
+        logger.info(f"Total de comparações realizadas: {total_comparacoes}")
+
+        # Análise de diferenças
+        dif_100 = len(df_comparacao[df_comparacao['Ganho'] == 100])
+        dif_80 = len(df_comparacao[df_comparacao['Ganho'] >= 80])
+        dif_50 = len(df_comparacao[df_comparacao['Ganho'] >= 50])
+        dif_20 = len(df_comparacao[df_comparacao['Ganho'] >= 20])
+
+        logger.info(f"\nDIFERENÇAS ENTRE NACIONAL E LOCAIS:")
+        logger.info(f"  Diferença de 100%: {dif_100} comparações")
+        logger.info(f"  Diferença >= 80%: {dif_80} comparações")
+        logger.info(f"  Diferença >= 50%: {dif_50} comparações")
+        logger.info(f"  Diferença >= 20%: {dif_20} comparações")
+
+        # Contar em quantos casos é melhor escolher Nacional vs Local
         contagem_melhor = df_comparacao['Melhor'].value_counts()
-        logger.info(f"Instituições com melhor taxa: \n{contagem_melhor}")
+        casos_nacional = contagem_melhor.get('Nacional', 0)
+        casos_local = total_comparacoes - casos_nacional
+
+        logger.info(f"\nESCOLHA ÓTIMA:")
+        logger.info(f"  Casos onde NatJus NACIONAL é melhor: {casos_nacional} ({casos_nacional/total_comparacoes*100:.1f}%)")
+        logger.info(f"  Casos onde NatJus LOCAL é melhor: {casos_local} ({casos_local/total_comparacoes*100:.1f}%)")
+
+        logger.info(f"\nINTERPRETAÇÃO:")
+        logger.info(f"Em {dif_20} casos ({dif_20/total_comparacoes*100:.1f}%), é possível aumentar as chances")
+        logger.info(f"de nota técnica favorável em pelo menos 20% pelo mero ato de escolher")
+        logger.info(f"entre o NatJus local e o NatJus Nacional.")
+
+        logger.info("\nDistribuição detalhada de casos onde cada instituição teve melhor taxa:")
+        for inst, count in contagem_melhor.items():
+            pct = count/total_comparacoes*100
+            logger.info(f"  {inst}: {count} casos ({pct:.1f}%)")
+
+        # Ganho médio
+        ganho_medio = df_comparacao['Ganho'].mean()
+        ganho_max = df_comparacao['Ganho'].max()
+        logger.info(f"\nGanho médio entre instituições: {ganho_medio:.1f}%")
+        logger.info(f"Ganho máximo observado: {ganho_max:.1f}%")
+        logger.info("=" * 60 + "\n")
 
     return df_comparacao
+
+
+def gerar_tabelas_publicacao(df_maiores_ganhos, pasta_output='outputs'):
+    """
+    Gera tabelas formatadas para publicação com maiores ganhos.
+
+    Args:
+        df_maiores_ganhos (pd.DataFrame): DataFrame com maiores ganhos
+        pasta_output (str): Pasta para salvar resultados
+    """
+    logger.info("\nGerando tabelas formatadas para publicação...")
+
+    # Tabela 2: Maiores aumentos optando pelo NatJus LOCAL
+    df_local = df_maiores_ganhos[df_maiores_ganhos['Ganho escolhendo'] != 'Nacional'].copy()
+
+    # Renomear colunas para publicação
+    df_local_pub = df_local.rename(columns={
+        'Instituição': 'NatJus',
+        'Medicamento': 'Princípio ativo',
+        'Ganho': 'Aumento'
+    })[['NatJus', 'Princípio ativo', 'CID', 'Aumento']]
+
+    # Ordenar por NatJus (para ficar igual ao exemplo fornecido)
+    df_local_pub = df_local_pub.sort_values('Aumento', ascending=False)
+
+    salvar_excel(df_local_pub, 'tabela2_maiores_aumentos_natjus_local.xlsx', pasta_output)
+    logger.info(f"Tabela 2 (NatJus local) salva: {len(df_local_pub)} registros")
+
+    # Tabela 3: Maiores aumentos optando pelo NatJus NACIONAL
+    df_nacional = df_maiores_ganhos[df_maiores_ganhos['Ganho escolhendo'] == 'Nacional'].copy()
+
+    # Renomear colunas para publicação
+    df_nacional_pub = df_nacional.rename(columns={
+        'Instituição': 'NatJus',
+        'Medicamento': 'Princípio ativo',
+        'Ganho': 'Aumento'
+    })[['NatJus', 'Princípio ativo', 'CID', 'Aumento']]
+
+    # Ordenar por Aumento decrescente
+    df_nacional_pub = df_nacional_pub.sort_values('Aumento', ascending=False)
+
+    salvar_excel(df_nacional_pub, 'tabela3_maiores_aumentos_natjus_nacional.xlsx', pasta_output)
+    logger.info(f"Tabela 3 (NatJus Nacional) salva: {len(df_nacional_pub)} registros")
+
+    logger.info("\n" + "=" * 60)
+    logger.info("RESUMO DAS TABELAS DE PUBLICAÇÃO")
+    logger.info("=" * 60)
+    logger.info(f"Tabela 2 - Maiores aumentos optando pelo NatJus LOCAL:")
+    logger.info(f"  Total de instituições: {len(df_local_pub)}")
+    logger.info(f"  Maior aumento: {df_local_pub['Aumento'].max():.1f}%")
+    logger.info(f"  Instituições com ganho >= 50%: {len(df_local_pub[df_local_pub['Aumento'] >= 50])}")
+
+    logger.info(f"\nTabela 3 - Maiores aumentos optando pelo NatJus NACIONAL:")
+    logger.info(f"  Total de instituições: {len(df_nacional_pub)}")
+    logger.info(f"  Maior aumento: {df_nacional_pub['Aumento'].max():.1f}%")
+    logger.info(f"  Instituições com ganho >= 50%: {len(df_nacional_pub[df_nacional_pub['Aumento'] >= 50])}")
+    logger.info("=" * 60 + "\n")
 
 
 def analisar_maiores_ganhos(df_comparacao, pasta_output='outputs'):
@@ -205,7 +372,7 @@ def analisar_maiores_ganhos(df_comparacao, pasta_output='outputs'):
         df_comparacao (pd.DataFrame): DataFrame com comparações
         pasta_output (str): Pasta para salvar resultados
     """
-    logger.info("Analisando maiores ganhos por instituição...")
+    logger.info("\nAnalisando maiores ganhos por instituição...")
 
     maiores_ganhos = []
 
@@ -253,7 +420,81 @@ def analisar_maiores_ganhos(df_comparacao, pasta_output='outputs'):
     df_maiores_ganhos = df_maiores_ganhos[cols]
 
     salvar_excel(df_maiores_ganhos, 'maiores_ganhos_instituicoes_e_nacional.xlsx', pasta_output)
-    logger.info(f"Maiores ganhos salvos: {len(df_maiores_ganhos)} registros")
+
+    logger.info("\n" + "=" * 60)
+    logger.info("MAIORES GANHOS POR INSTITUIÇÃO")
+    logger.info("=" * 60)
+    logger.info(f"Total de registros de maiores ganhos: {len(df_maiores_ganhos)}")
+
+    # Estatísticas por tipo de escolha
+    if not df_maiores_ganhos.empty:
+        ganhos_por_escolha = df_maiores_ganhos.groupby('Ganho escolhendo').size()
+        logger.info("\nDistribuição de maiores ganhos:")
+        for escolha, count in ganhos_por_escolha.items():
+            logger.info(f"  Escolhendo {escolha}: {count} casos")
+
+        # Maiores ganhos absolutos
+        ganho_max = df_maiores_ganhos['Ganho'].max()
+        logger.info(f"\nMaior ganho observado: {ganho_max:.1f}%")
+
+    logger.info("=" * 60 + "\n")
+
+    return df_maiores_ganhos
+
+
+def gerar_quadro_divergencias_maximas(df_difs, pasta_output='outputs'):
+    """
+    Gera um quadro formatado com casos de divergência máxima (100%).
+
+    Args:
+        df_difs (pd.DataFrame): DataFrame com análise de diferenças
+        pasta_output (str): Pasta para salvar resultados
+
+    Returns:
+        pd.DataFrame: Quadro formatado com divergências de 100%
+    """
+    logger.info("\nGerando quadro de divergências máximas (100%)...")
+
+    # Filtrar apenas diferenças de 100%
+    df_100 = df_difs[df_difs['Diferença entre o órgão + favorável e o - favorável'] == 100].copy()
+
+    if df_100.empty:
+        logger.info("Nenhuma divergência de 100% encontrada.")
+        return pd.DataFrame()
+
+    quadro = []
+
+    for _, row in df_100.iterrows():
+        # Obter informações
+        tecnologia = row['Tecnologia']
+        cid = row['CID']
+        orgaos_max = row['Órgão de ATS + Favorável']
+        valor_max = row['Valor em favorável do Órgão de ATS + favorável']
+        orgaos_min = row['Órgão de ATS - Favorável']
+        valor_min = row['Valor em favorável do Órgão de ATS - favorável']
+
+        # Determinar quem sempre concede e quem nunca concede
+        if valor_max == 100 and valor_min == 0:
+            sempre_concede = orgaos_max
+            nunca_concede = orgaos_min
+        else:
+            # Caso não seja exatamente 100% vs 0%, ainda mostra
+            sempre_concede = f"{orgaos_max} ({valor_max:.0f}%)"
+            nunca_concede = f"{orgaos_min} ({valor_min:.0f}%)"
+
+        quadro.append({
+            'Princípio ativo': tecnologia,
+            'CID': cid,
+            'Sempre concede(m)': sempre_concede,
+            'Nunca concede(m)': nunca_concede
+        })
+
+    df_quadro = pd.DataFrame(quadro)
+    salvar_excel(df_quadro, 'quadro_divergencias_maximas.xlsx', pasta_output)
+
+    logger.info(f"Quadro de divergências máximas salvo: {len(df_quadro)} casos")
+
+    return df_quadro
 
 
 def main():
@@ -274,12 +515,18 @@ def main():
     # Análise de diferenças entre instituições
     df_difs = analisar_diferencas_entre_instituicoes(df_base, pasta_output)
 
+    # Gerar quadro de divergências máximas
+    gerar_quadro_divergencias_maximas(df_difs, pasta_output)
+
     # Comparação com Nacional
     df_comparacao = comparar_com_nacional(df_base, pasta_output)
 
     # Analisar maiores ganhos
     if not df_comparacao.empty:
-        analisar_maiores_ganhos(df_comparacao, pasta_output)
+        df_maiores_ganhos = analisar_maiores_ganhos(df_comparacao, pasta_output)
+
+        # Gerar tabelas formatadas para publicação
+        gerar_tabelas_publicacao(df_maiores_ganhos, pasta_output)
 
     logger.info("=" * 60)
     logger.info("ANÁLISE DE DIFERENÇAS POR MEDICAMENTOS CONCLUÍDA")
