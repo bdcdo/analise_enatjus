@@ -118,10 +118,12 @@ def calcular_taxas_subconjuntos(df, pasta_output='outputs'):
     # selIndicacaoConformidade: 'N' = Não (offlabel)
     # selPrevistoProtocolo: 'N' = Não (não previsto em PCDT)
     # selDisponivelSus: 'N' = Não (não disponível no SUS/não incorporado)
-    # selRecomendacaoConitec: 'F' = Não Recomendada
+    # selRecomendacaoConitec: 'D' = Não Recomendada (Desfavorável)
     colunas_filtro = ['selIndicacaoConformidade', 'selPrevistoProtocolo', 'selDisponivelSus', 'selRecomendacaoConitec']
-    valores_filtro = ['N', 'N', 'N', 'F']
+    valores_filtro = ['N', 'N', 'N', 'D']
 
+    # Não aplicar filtro de min_observacoes aqui pois as instituições já foram pré-selecionadas
+    # com base em terem pelo menos pareceres suficientes no geral
     for coluna, valor in zip(colunas_filtro, valores_filtro):
         resultados_finais.extend(processar_subconjunto(df, coluna, valor, 100))
 
@@ -149,8 +151,8 @@ def gerar_graficos_taxas(df_taxas, df_subconjuntos, pasta_output='outputs'):
     """
     logger.info("Gerando gráficos de taxas de concessão...")
 
-    # Gráfico geral
-    grafico_barras_sucesso(df_taxas, output_path=os.path.join(pasta_output, 'grafico_taxas_gerais.png'))
+    # Gráfico geral (aumentar largura para 24 instituições)
+    grafico_barras_sucesso(df_taxas, x=24, y=9, output_path=os.path.join(pasta_output, 'grafico_taxas_gerais.png'))
 
     # Gráficos por subconjunto
     for coluna in df_subconjuntos['Coluna'].unique():
